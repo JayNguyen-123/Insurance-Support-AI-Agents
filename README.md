@@ -2,8 +2,6 @@
 
 A production-grade, multi-agent AI system for insurance customer support: a **Supervisor** agent routes each request to a **Policy**, **Billing**, **Claims**, **General Help** (RAG/FAQ), or **Human Escalation** specialist, built on [LangGraph](https://github.com/langchain-ai/langgraph) and served as a **FastAPI** REST API.
 
-This is a rewrite of an exploratory Jupyter/Colab notebook (`Insurance_Support_AI_Agents.ipynb`) into a deployable service: modular code, environment-driven configuration, structured logging, retries, a real test suite, and a Docker image -- plus fixes for several bugs the notebook's linear "run all cells" execution style let slide. See **[What changed from the notebook](#what-changed-from-the-notebook)** below.
-
 ## Architecture
 
 ```
@@ -33,23 +31,6 @@ SQLite (policies/billing/claims/customers)   ChromaDB (FAQ vectors)
 ```
 
 Each specialist agent calls OpenAI (`gpt-5-mini` by default) with function-calling tools backed by `app/db/repository.py` (parameterized SQL against the synthetic SQLite database) or, for General Help, a FAQ vector search (`app/vectorstore/faq_store.py`).
-
-## What changed from the notebook
-
-The original notebook was a working prototype; turning it into a service required fixing several bugs that only surface once you stop clicking "Run All" in Colab:
-
-- **Blocking `input()` for clarification questions.** The notebook's `ask_user()` called Python's `input()`, which blocks a thread waiting on a keyboard that will never write to it -- fatal in a web server. The supervisor now returns `needs_clarification=True` and pauses the graph; the API returns the question to the caller and resumes the conversation on the next request with the answer (`app/agents/supervisor.py`, `app/services/conversation_service.py`).
-- **A syntax error in `decide_next_agent`** (`if state.get("needs_clarification": return ...)`) would have raised `SyntaxError` the moment that cell ran outside of the specific state the notebook happened to be in.
-- **A typo (`policy_agennt`) silently dropped `policy_agent`'s edge back to the supervisor**, leaving it a dead-end node.
-- **`policy_agent_node` and `claims_agent_node` never appended their answers to `conversation_history`**, so the supervisor's next routing decision couldn't see what they'd said (only `billing_agent_node` and `general_help_agent_node` did this correctly). All four specialists now update history consistently.
-- **The supervisor's iteration counter double/triple-counted a single clarification round-trip** (ask → merge → route was three separate invocations, each incrementing the counter), which could burn the entire iteration budget on one clarifying question and force an unwanted escalation on the very next real decision. Resuming with an answer and making the routing decision now happen in one call.
-- **`'OH' 'GA'`** (missing comma) in the sample-data generator was silently concatenated by Python into a bogus state code `'OHGA'`.
-- **The DROP script referenced a table named `billings`** while the table is created as `billing`, so re-seeding an already-seeded database silently failed to clear old rows.
-- **`trace_agent`'s `span.set_attribute(Status(...))`** should have been `span.set_status(...)`; span status was never actually being recorded.
-- **`getpass.getpass(...)` at import time** for the Phoenix tracing endpoint blocks forever in any non-interactive process. Tracing is now fully optional and config-driven (`PHOENIX_COLLECTOR_ENDPOINT`); the app runs normally with it unset.
-- **Loading the FAQ dataset from Hugging Face at import time** meant the app couldn't start without network access to the Hub. It now seeds from a small bundled CSV by default and only attempts the Hugging Face download when explicitly enabled, falling back automatically on any failure.
-
-None of this changes the product behavior described in the notebook -- it makes that behavior actually work outside of a notebook.
 
 ## Quickstart
 
@@ -118,16 +99,6 @@ pytest
 ```
 
 The suite covers: DB repository functions against a seeded temp SQLite database, the FAQ vector store, the supervisor's routing/JSON-parsing/escalation logic (including a dedicated regression test proving a clarification question no longer blocks or double-counts iterations), the LangGraph wiring (including regression tests for the two graph-construction bugs above), the full conversation service (session creation, pause/resume across two calls, human escalation), and the FastAPI endpoints end-to-end -- all against a scripted fake OpenAI client, so no real API key or network access is required to run the tests.
-
-## Known limitations & natural next steps
-
-This is a **solid engineering baseline**, not a fully hardened enterprise deployment. Deliberately out of scope, and worth knowing about before you go further:
-
-- **SQLite + in-memory sessions are single-process.** They're fine for a demo or a single-instance deployment, but won't work correctly behind multiple worker processes/instances without changes. Swap `app/db/session.py` for a PostgreSQL connection pool and `app/services/session_store.py` for Redis (or another shared store) to scale out -- both were written with a narrow, documented interface specifically so that swap is contained.
-- **No authentication, rate limiting, or per-tenant isolation** on the API. Add these (e.g. an API gateway, API keys, or OAuth) before exposing this beyond a trusted network.
-- **No PII redaction or prompt-injection guardrails** on user input or LLM output beyond what's in the prompts themselves.
-- **No native LangGraph checkpointer.** The clarification pause/resume is implemented by hand (storing/reloading plain `GraphState` dicts in the session store) rather than via LangGraph's built-in `interrupt()`/checkpointer machinery, which is the more scalable approach for complex multi-turn human-in-the-loop flows at scale, but adds real complexity for a first production cut.
-- **The synthetic sample data** (`app/db/seed_data.py`) is randomly generated for demo purposes and does not represent real customers, policies, or claims.
 
 ## Project layout
 
