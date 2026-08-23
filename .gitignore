@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.test
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+data/insurance_support.db
+data/chroma_db/
+data/insurance_agent.log
+*.log
+.DS_Store

@@ -1,0 +1,27 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: insurance-support-agents:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Paths inside the container -- override anything else via .env.
+      DATABASE_PATH: /srv/app/data/insurance_support.db
+      CHROMA_PERSIST_DIR: /srv/app/data/chroma_db
+      LOG_FILE: /srv/app/data/insurance_agent.log
+    volumes:
+      - insurance_data:/srv/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  insurance_data:
